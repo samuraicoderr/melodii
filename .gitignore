@@ -1,0 +1,6 @@
+.research/
+node_modules/
+a.*
+frontend-before/
+*.log
+bash.exe.stackdump

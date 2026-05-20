@@ -149,6 +149,10 @@ export const BackendRoutes = {
     websocket: (token: string) => `ws://localhost:9000/ws/melodii/?token=${token}`,
   },
 
+  genreAi: {
+    classify: `${API_VERSION}/genre-ai/classify/`,
+  },
+
   me: `${API_VERSION}/users/me/`,
   userMemberships: `${API_VERSION}/users/memberships/`,
   setActiveOrganization: `${API_VERSION}/users/active-org/`,

@@ -258,6 +258,25 @@ TIME_ZONE = "UTC"
 LANGUAGE_CODE = "en-us"
 
 USE_I18N = False
+
+# ============================================================
+# GENRE AI SETTINGS
+# ============================================================
+
+GENRE_AI_DEFAULT_MODEL = os.getenv(
+    "GENRE_AI_DEFAULT_MODEL",
+    "dima806/music_genres_classification",
+)
+GENRE_AI_HF_TOKEN = os.getenv("GENRE_AI_HF_TOKEN")
+GENRE_AI_MAX_FILE_SIZE_MB = int(os.getenv("GENRE_AI_MAX_FILE_SIZE_MB", "30"))
+GENRE_AI_ALLOWED_EXTENSIONS = [
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".flac",
+    ".m4a",
+]
+GENRE_AI_TOP_K = int(os.getenv("GENRE_AI_TOP_K", "5"))
 USE_L10N = True
 USE_TZ = True
 
