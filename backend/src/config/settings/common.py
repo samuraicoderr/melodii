@@ -275,6 +275,11 @@ GENRE_AI_DEFAULT_MODEL = os.getenv(
     "dima806/music_genres_classification",
 )
 GENRE_AI_HF_TOKEN = os.getenv("GENRE_AI_HF_TOKEN")
+GENRE_AI_MODEL_CACHE_DIR = os.getenv(
+    "GENRE_AI_MODEL_CACHE_DIR",
+    os.path.join(os.path.dirname(BASE_DIR), "models"),
+)
+GENRE_AI_CLIP_SECONDS = int(os.getenv("GENRE_AI_CLIP_SECONDS", "120"))
 GENRE_AI_MAX_FILE_SIZE_MB = int(os.getenv("GENRE_AI_MAX_FILE_SIZE_MB", "30"))
 GENRE_AI_ALLOWED_EXTENSIONS = [
     ".mp3",

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GenreAIService from "@/lib/api/services/GenreAI.Service";
-import type { GenreClassificationResponse } from "@/lib/api/types";
+import { GenreAIJobSocket } from "@/lib/api/services/GenreAIJobSocket";
+import type { GenreClassificationResponse, GenreAILogEvent } from "@/lib/api/types";
 import { apiClient } from "@/lib/api/ApiClient";
 import {
   isTauri,
@@ -34,6 +35,13 @@ const MODEL_OPTIONS = [
   },
 ];
 
+type TerminalLine = {
+  id: string;
+  timestamp: string;
+  level: string;
+  message: string;
+};
+
 export default function Home() {
   const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].id);
   const [file, setFile] = useState<File | null>(null);
@@ -41,15 +49,46 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenreClassificationResponse | null>(null);
-  const [isDesktop, setIsDesktop] = useState(false);
-  const [backendReady, setBackendReady] = useState(false);
+  const [terminalLines, setTerminalLines] = useState<TerminalLine[]>([]);
+  const [isDesktop] = useState(() => isTauri());
+  const [backendReady, setBackendReady] = useState(() => !isTauri());
   const [backendError, setBackendError] = useState<string | null>(null);
+  const jobSocketRef = useRef<GenreAIJobSocket | null>(null);
+  const terminalLineIdsRef = useRef<Set<string>>(new Set());
 
   const selectedModelLabel = useMemo(() => {
     return MODEL_OPTIONS.find((model) => model.id === selectedModel)?.label ?? "";
   }, [selectedModel]);
 
   const formatPercent = (value: number) => `${Math.round(value * 1000) / 10}%`;
+  const formatLogTime = (timestamp: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(new Date(timestamp));
+
+  const closeJobSocket = useCallback(() => {
+    jobSocketRef.current?.close();
+    jobSocketRef.current = null;
+  }, []);
+
+  const appendTerminalLine = (line: Omit<TerminalLine, "id">) => {
+    const id = `${line.timestamp}:${line.level}:${line.message}`;
+    if (terminalLineIdsRef.current.has(id)) {
+      return;
+    }
+    terminalLineIdsRef.current.add(id);
+    setTerminalLines((lines) => [...lines, { ...line, id }].slice(-160));
+  };
+
+  const appendLogEvent = (event: GenreAILogEvent) => {
+    appendTerminalLine({
+      timestamp: event.timestamp,
+      level: event.level,
+      message: event.message,
+    });
+  };
 
   const validateFile = (candidate: File): string | null => {
     const extension = candidate.name.split(".").pop()?.toLowerCase() ?? "";
@@ -77,6 +116,8 @@ export default function Home() {
     setError(null);
     setFile(candidate);
     setResult(null);
+    setTerminalLines([]);
+    terminalLineIdsRef.current.clear();
   };
 
   const handleSubmit = async () => {
@@ -91,21 +132,78 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
+    setResult(null);
+    setTerminalLines([]);
+    terminalLineIdsRef.current.clear();
+    closeJobSocket();
 
     try {
-      const response = await GenreAIService.classify(file, selectedModel);
-      setResult(response);
-    } catch (err: any) {
-      setError(err?.message ?? "Something went wrong. Please try again.");
-    } finally {
+      appendTerminalLine({
+        timestamp: new Date().toISOString(),
+        level: "info",
+        message: "Uploading audio and starting job",
+      });
+
+      const job = await GenreAIService.classify(file, selectedModel);
+      appendTerminalLine({
+        timestamp: new Date().toISOString(),
+        level: "info",
+        message: `Job ${job.task_id} queued`,
+      });
+
+      const socket = new GenreAIJobSocket(job.websocket_url, {
+        onOpen: () => {
+          appendTerminalLine({
+            timestamp: new Date().toISOString(),
+            level: "info",
+            message: "Live log stream connected",
+          });
+        },
+        onEvent: (event) => {
+          if (event.type === "log") {
+            appendLogEvent(event);
+            return;
+          }
+          if (event.type === "result") {
+            setResult(event.payload);
+            return;
+          }
+          if (event.type === "error") {
+            setError(event.message);
+            setLoading(false);
+            return;
+          }
+          if (event.type === "done") {
+            setLoading(false);
+            closeJobSocket();
+          }
+        },
+        onError: (message) => {
+          appendTerminalLine({
+            timestamp: new Date().toISOString(),
+            level: "warning",
+            message,
+          });
+        },
+      });
+      jobSocketRef.current = socket;
+      socket.connect();
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Something went wrong. Please try again."
+      );
       setLoading(false);
     }
   };
 
   const handleReset = () => {
+    closeJobSocket();
     setFile(null);
     setResult(null);
     setError(null);
+    setLoading(false);
+    setTerminalLines([]);
+    terminalLineIdsRef.current.clear();
   };
 
   const handleWindowAction = async (action: "minimize" | "maximize" | "close") => {
@@ -135,19 +233,17 @@ export default function Home() {
         if (mounted) {
           setBackendReady(true);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (mounted) {
-          setBackendError(err?.message ?? "Backend failed to start");
+          setBackendError(err instanceof Error ? err.message : "Backend failed to start");
         }
       }
     };
 
-    const desktop = isTauri();
-    setIsDesktop(desktop);
-    if (!desktop) {
-      setBackendReady(true);
+    if (!isDesktop) {
       return () => {
         mounted = false;
+        closeJobSocket();
       };
     }
 
@@ -155,9 +251,10 @@ export default function Home() {
 
     return () => {
       mounted = false;
+      closeJobSocket();
       stopBackend();
     };
-  }, []);
+  }, [closeJobSocket, isDesktop]);
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-12 md:px-12">
@@ -331,6 +428,41 @@ export default function Home() {
               {backendError && (
                 <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-[var(--danger)]">
                   {backendError}
+                </div>
+              )}
+
+              {terminalLines.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-[#05070a] p-4 font-mono text-xs text-[#d6f7ea] shadow-inner">
+                  <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-[var(--accent)]">melodii model runner</span>
+                    <span className="text-[var(--muted)]">
+                      {loading ? "running" : result ? "complete" : "idle"}
+                    </span>
+                  </div>
+                  <div className="max-h-64 space-y-1 overflow-y-auto pr-2">
+                    {terminalLines.map((line) => (
+                      <div
+                        key={line.id}
+                        className="grid grid-cols-[4.5rem_4rem_1fr] gap-2"
+                      >
+                        <span className="text-[var(--muted)]">
+                          {formatLogTime(line.timestamp)}
+                        </span>
+                        <span
+                          className={
+                            line.level === "error"
+                              ? "text-[var(--danger)]"
+                              : line.level === "warning"
+                                ? "text-yellow-300"
+                                : "text-[var(--accent)]"
+                          }
+                        >
+                          {line.level}
+                        </span>
+                        <span className="break-words">{line.message}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

@@ -114,6 +114,9 @@ venv.bak/
 media/*
 !media/.gitkeep
 
+# Hugging Face / Torch model cache
+models/
+
 
 # Just ignore
 .README.md
