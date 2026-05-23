@@ -26,7 +26,7 @@
       "../backend/ffmpeg/**",
       "../backend/models/**"
     ],
-    "externalBin": ["../backend/dist/melodii-backend"]
+    "externalBin": ["../src-tauri/bin/melodii-backend"]
   },
   "plugins": {
     "shell": {

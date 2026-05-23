@@ -8,6 +8,8 @@ TAURI_DIR=./src-tauri
 TAURI_BIN_DIR=$(TAURI_DIR)/bin
 BACKEND_DIST=$(BACKEND_DIR)/dist
 SIDECAR_NAME=melodii-backend
+TAURI_TARGET=x86_64-pc-windows-msvc
+SIDECAR_TARGET_NAME=$(SIDECAR_NAME)-$(TAURI_TARGET).exe
 
 runserver: frontend backend
 
@@ -42,7 +44,7 @@ desktop-copy-sidecar:
 # 		cp $(BACKEND_DIST)/$(SIDECAR_NAME) $(TAURI_BIN_DIR)/; \
 # 	fi
 	powershell -Command "New-Item -ItemType Directory -Force -Path $(TAURI_BIN_DIR)"
-	powershell -Command "if (Test-Path '$(BACKEND_DIST)/$(SIDECAR_NAME).exe') { Copy-Item '$(BACKEND_DIST)/$(SIDECAR_NAME).exe' '$(TAURI_BIN_DIR)/' -Force } else { Copy-Item '$(BACKEND_DIST)/$(SIDECAR_NAME)' '$(TAURI_BIN_DIR)/' -Force }"
+	powershell -Command "if (Test-Path '$(BACKEND_DIST)/$(SIDECAR_NAME).exe') { Copy-Item '$(BACKEND_DIST)/$(SIDECAR_NAME).exe' '$(TAURI_BIN_DIR)/$(SIDECAR_TARGET_NAME)' -Force } else { Copy-Item '$(BACKEND_DIST)/$(SIDECAR_NAME)' '$(TAURI_BIN_DIR)/$(SIDECAR_TARGET_NAME)' -Force }"
 
 
 desktop-tauri-build:

@@ -52,6 +52,7 @@ third_party_apps = [
     "easy_thumbnails",
     "health_check",
     "phonenumber_field",
+    "social_core",
     "social_django",
     "storages",
     "webauthn",
