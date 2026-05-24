@@ -11,6 +11,7 @@ import {
   stopBackend,
   waitForBackend,
 } from "@/lib/tauri/backend";
+import { GenreAIProgressBar } from "./GenreAIProgressBar";
 
 const MAX_FILE_MB = 30;
 const ALLOWED_EXTENSIONS = ["mp3", "wav", "ogg", "flac", "m4a"];
@@ -421,8 +422,15 @@ export default function Home() {
                 </button>
               </div>
 
-              {(loading || (isDesktop && !backendReady)) && (
+              {/* {(loading || (isDesktop && !backendReady)) && (
                 <div className="loading-bar h-2 w-full rounded-full bg-white/10" />
+              )} */}
+              {(loading || (isDesktop && !backendReady)) && (
+                <GenreAIProgressBar
+                  terminalLines={terminalLines}
+                  loading={loading}
+                  stopPercentage={0.5}
+                />
               )}
 
               {backendError && (
