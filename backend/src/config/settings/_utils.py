@@ -10,10 +10,11 @@ def _log(msg, level="INFO"):
 
 def load_env_vars(env_file: str = "./.env", always_create_env: bool=False):
     _log(f"called with env_file={env_file!r}, always_create_env={always_create_env!r}")
-    if not os.path.isfile(env_file):
+    if os.path.isdir(env_file):
         env_path = os.path.abspath(env_file)
         env_file = os.path.join(env_path, ".env")
         _log(f"⚠️ ENV path was not a file. Assuming {env_file} as the ENV file path.", "WARNING")
+
     if not os.path.exists(env_file):
         if always_create_env:
             _log(
@@ -28,6 +29,7 @@ def load_env_vars(env_file: str = "./.env", always_create_env: bool=False):
                 "WARNING",
             )
             return
+        
     getattr(
         dotenv,
         "read_dotenv",
