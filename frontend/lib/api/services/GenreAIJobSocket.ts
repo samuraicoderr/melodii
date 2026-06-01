@@ -33,9 +33,26 @@ export class GenreAIJobSocket {
     this.socket = null;
   }
 
+  private normalizeUrl(url: string): string {
+    if (typeof window === "undefined") {
+      return url;
+    }
+
+    const secure = window.location.protocol === "https:";
+    if (!secure) {
+      return url;
+    }
+
+    if (url.startsWith("ws://")) {
+      return `wss://${url.slice(5)}`;
+    }
+
+    return url;
+  }
+
   private openSocket(): void {
     this.clearReconnectTimer();
-    this.socket = new WebSocket(this.url);
+    this.socket = new WebSocket(this.normalizeUrl(this.url));
 
     this.socket.onopen = () => {
       this.reconnectAttempts = 0;

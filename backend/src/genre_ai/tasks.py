@@ -77,7 +77,7 @@ def _validation_message(exc: ValidationError) -> str:
 @shared_task(bind=True, name="genre_ai.classify")
 def classify_genre_task(
     self,
-    file_path: str,
+    storage_key: str,
     filename: str,
     file_size_bytes: int,
     model_name: str,
@@ -90,8 +90,8 @@ def classify_genre_task(
         send_log(task_id, "Validating file")
         GenreAIService.validate_file(filename, file_size_bytes)
 
-        result = GenreAIService.classify_file_path(
-            file_path,
+        result = GenreAIService.classify_storage_file(
+            storage_key,
             model_name=model_name,
             log_callback=lambda message: send_log(task_id, message),
         )
@@ -119,4 +119,4 @@ def classify_genre_task(
         logger.exception("Genre AI task failed")
         raise
     finally:
-        GenreAIService.cleanup_temp_file(file_path)
+        GenreAIService.cleanup_storage_file(storage_key)

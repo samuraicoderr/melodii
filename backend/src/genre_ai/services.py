@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Dict, List
 
 from django.conf import settings
+from django.core.files.storage import default_storage
 from rest_framework.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -198,15 +199,13 @@ class GenreAIService:
     def save_uploaded_file(uploaded_file, task_id: str) -> str:
         _, ext = os.path.splitext(uploaded_file.name)
         safe_ext = ext.lower() or ".audio"
-        jobs_dir = Path(tempfile.gettempdir()) / "melodii_genre_ai_jobs"
-        jobs_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = jobs_dir / f"{task_id}{safe_ext}"
+        storage_key = os.path.join("genre_ai", "uploads", f"{task_id}{safe_ext}")
 
-        with temp_path.open("wb") as tmp_handle:
-            for chunk in uploaded_file.chunks():
-                tmp_handle.write(chunk)
+        if default_storage.exists(storage_key):
+            default_storage.delete(storage_key)
 
-        return str(temp_path)
+        saved_name = default_storage.save(storage_key, uploaded_file)
+        return saved_name
 
     @staticmethod
     def cleanup_temp_file(file_path: str | None) -> None:
@@ -217,6 +216,48 @@ class GenreAIService:
                 os.unlink(file_path)
         except OSError:
             logger.warning("Failed to remove temp file: %s", file_path, exc_info=True)
+
+    @staticmethod
+    def cleanup_storage_file(storage_key: str | None) -> None:
+        if not storage_key:
+            return
+        try:
+            if default_storage.exists(storage_key):
+                default_storage.delete(storage_key)
+        except Exception:
+            logger.warning("Failed to remove storage file: %s", storage_key, exc_info=True)
+
+    @staticmethod
+    def classify_storage_file(
+        storage_key: str,
+        model_name: str | None = None,
+        log_callback: Callable[[str], None] | None = None,
+    ) -> dict:
+        local_path = None
+        try:
+            local_path = GenreAIService._download_storage_file_to_temp(storage_key)
+            return GenreAIService._classify_path(
+                local_path,
+                filename=os.path.basename(storage_key),
+                file_size_bytes=os.path.getsize(local_path),
+                model_name=model_name,
+                log_callback=log_callback,
+            )
+        finally:
+            GenreAIService.cleanup_temp_file(local_path)
+
+    @staticmethod
+    def _download_storage_file_to_temp(storage_key: str) -> str:
+        _, ext = os.path.splitext(storage_key)
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext or ".audio")
+        temp_file.close()
+        try:
+            with default_storage.open(storage_key, "rb") as source, open(temp_file.name, "wb") as dest:
+                shutil.copyfileobj(source, dest)
+            return temp_file.name
+        except Exception:
+            GenreAIService.cleanup_temp_file(temp_file.name)
+            raise
 
     @staticmethod
     def _write_temp_file(uploaded_file) -> str:

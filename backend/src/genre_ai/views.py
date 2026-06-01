@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from rest_framework import status, viewsets
@@ -34,6 +35,16 @@ def _ensure_celery_ready() -> tuple[bool, str]:
     return True, ""
 
 
+def _build_websocket_url(request, task_id: str) -> str:
+    host = request.get_host()
+    if not host:
+        parsed = urlsplit(str(getattr(settings, "SITE_URL", "")))
+        host = parsed.netloc
+
+    proto = "wss" if request.is_secure() or request.META.get("HTTP_X_FORWARDED_PROTO", "").lower() == "https" else "ws"
+    return f"{proto}://{host}/ws/genre-ai/{task_id}/"
+
+
 class GenreAIViewset(ViewSetHelperMixin, viewsets.GenericViewSet):
     serializers = {
         "default": EmptySerializer,
@@ -64,11 +75,15 @@ class GenreAIViewset(ViewSetHelperMixin, viewsets.GenericViewSet):
             GenreAIService.validate_file(uploaded_file.name, uploaded_file.size)
 
             task_id = uuid4().hex
-            file_path = GenreAIService.save_uploaded_file(uploaded_file, task_id)
-            classify_genre_task.apply_async(
-                args=[file_path, uploaded_file.name, uploaded_file.size, model_name],
-                task_id=task_id,
-            )
+            storage_key = GenreAIService.save_uploaded_file(uploaded_file, task_id)
+            try:
+                classify_genre_task.apply_async(
+                    args=[storage_key, uploaded_file.name, uploaded_file.size, model_name],
+                    task_id=task_id,
+                )
+            except Exception:
+                GenreAIService.cleanup_storage_file(storage_key)
+                raise
         except ValidationError:
             raise
         except Exception:
@@ -78,12 +93,7 @@ class GenreAIViewset(ViewSetHelperMixin, viewsets.GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        websocket_url = request.build_absolute_uri(f"/ws/genre-ai/{task_id}/")
-        websocket_url = websocket_url.replace("http://", "ws://", 1).replace(
-            "https://",
-            "wss://",
-            1,
-        )
+        websocket_url = _build_websocket_url(request, task_id)
         return Response(
             {
                 "success": True,
