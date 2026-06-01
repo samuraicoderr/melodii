@@ -65,6 +65,7 @@ dependencies = [
     "watchfiles==1.1.1",
     "webauthn>=2.7.1",
     "whitenoise==6.9.0",
+    "boto3>=1.43.18",
 ]
 
 [tool.uv.sources]
