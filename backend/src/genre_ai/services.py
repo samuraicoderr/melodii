@@ -61,21 +61,30 @@ class GenreAIService:
     def _pipeline_timeout(seconds: int):
         """
         Context manager that raises TimeoutError if the body does not complete
-        within *seconds*.  Uses SIGALRM, which is only available on UNIX/Linux —
-        the environment where the Celery worker runs in production.
+        within *seconds*. Uses SIGALRM on UNIX/Linux. On Windows the feature is
+        unavailable, so this becomes a no-op and the pipeline runs without a
+        Python-level timeout.
         """
+        sigalrm = getattr(signal, "SIGALRM", None)
+        if sigalrm is None:
+            logger.warning(
+                "SIGALRM not available on this platform; pipeline timeout disabled."
+            )
+            yield
+            return
+
         def _handler(signum, frame):
             raise TimeoutError(
                 f"pipeline() did not complete within {seconds} seconds"
             )
 
-        old_handler = signal.signal(signal.SIGALRM, _handler)
+        old_handler = signal.signal(sigalrm, _handler)
         signal.alarm(seconds)
         try:
             yield
         finally:
             signal.alarm(0)  # cancel any pending alarm
-            signal.signal(signal.SIGALRM, old_handler)  # restore previous handler
+            signal.signal(sigalrm, old_handler)  # restore previous handler
 
     @staticmethod
     @lru_cache(maxsize=1)
