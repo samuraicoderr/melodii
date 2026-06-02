@@ -288,12 +288,81 @@ class GenreAIService:
         _, ext = os.path.splitext(storage_key)
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext or ".audio")
         temp_file.close()
+
+        def _log_storage_context(message: str) -> None:
+            backend_name = getattr(default_storage, "__class__", type(default_storage)).__name__
+            bucket_name = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
+            endpoint = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
+            logger.warning(
+                "%s | storage_key=%s backend=%s bucket=%s endpoint=%s",
+                message,
+                storage_key,
+                backend_name,
+                bucket_name,
+                endpoint,
+            )
+
         try:
             with default_storage.open(storage_key, "rb") as source, open(temp_file.name, "wb") as dest:
                 shutil.copyfileobj(source, dest)
             return temp_file.name
+        except FileNotFoundError as exc:
+            _log_storage_context("default_storage file not found")
+            GenreAIService.cleanup_temp_file(temp_file.name)
+            return GenreAIService._download_storage_file_to_temp_boto3(storage_key)
         except Exception:
             GenreAIService.cleanup_temp_file(temp_file.name)
+            raise
+
+    @staticmethod
+    def _download_storage_file_to_temp_boto3(storage_key: str) -> str:
+        try:
+            import boto3
+            from botocore.config import Config
+        except ImportError as exc:
+            logger.exception("boto3 is required for S3 fallback")
+            raise RuntimeError("boto3 is required for direct S3 fallback") from exc
+
+        bucket = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
+        if not bucket:
+            raise RuntimeError("AWS_STORAGE_BUCKET_NAME is not configured for direct S3 fallback")
+
+        endpoint_url = getattr(settings, "AWS_S3_ENDPOINT_URL", None)
+        region_name = getattr(settings, "AWS_S3_REGION_NAME", None)
+        access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
+        secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
+        addressing_style = getattr(settings, "AWS_S3_ADDRESSING_STYLE", None)
+
+        config = Config(
+            s3={"addressing_style": addressing_style or "auto"},
+            region_name=region_name,
+        )
+
+        kwargs = {
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key,
+            "config": config,
+        }
+        if endpoint_url:
+            kwargs["endpoint_url"] = endpoint_url
+
+        client = boto3.client("s3", **{k: v for k, v in kwargs.items() if v is not None})
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(storage_key)[1] or ".audio")
+        temp_file.close()
+        try:
+            logger.info(
+                "Attempting direct S3 fallback download: bucket=%s key=%s endpoint=%s",
+                bucket,
+                storage_key,
+                endpoint_url,
+            )
+            response = client.get_object(Bucket=bucket, Key=storage_key)
+            with response["Body"] as body, open(temp_file.name, "wb") as dest:
+                shutil.copyfileobj(body, dest)
+            return temp_file.name
+        except Exception:
+            GenreAIService.cleanup_temp_file(temp_file.name)
+            logger.exception("Direct S3 fallback download failed for %s", storage_key)
             raise
 
     @staticmethod
