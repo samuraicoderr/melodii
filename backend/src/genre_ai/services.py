@@ -1,7 +1,6 @@
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -159,7 +158,7 @@ class GenreAIService:
                 log_callback(message)
 
         log_step("Checking audio processing tools")
-        GenreAIService._ensure_ffmpeg_available()
+        GenreAIService._ensure_audio_processing_dependencies()
         settings_map = GenreAIService.get_settings()
         cache_dir = str(settings_map["model_cache_dir"])
 
@@ -272,60 +271,43 @@ class GenreAIService:
             raise
 
     @staticmethod
-    def _ensure_ffmpeg_available() -> None:
-        if shutil.which("ffmpeg") is None:
+    def _ensure_audio_processing_dependencies() -> None:
+        try:
+            import librosa  # noqa: F401
+            import soundfile  # noqa: F401
+        except ImportError as exc:
+            logger.exception("Audio processing dependencies are missing")
             raise ValidationError(
-                "ffmpeg is required to process audio files. Install it and ensure it is on your PATH."
-            )
+                "Audio processing requires librosa and soundfile. Install the Python dependencies."
+            ) from exc
 
     @staticmethod
     def _clip_audio(file_path: str, seconds: int) -> str:
-        _, ext = os.path.splitext(file_path)
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext or ".audio")
+        try:
+            import librosa
+            import soundfile as sf
+        except ImportError as exc:
+            logger.exception("Audio processing dependencies are missing")
+            raise ValidationError(
+                "Audio processing requires librosa and soundfile. Install the Python dependencies."
+            ) from exc
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         temp_file.close()
 
-        command = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            file_path,
-            "-t",
-            str(seconds),
-            "-c",
-            "copy",
-            temp_file.name,
-        ]
-
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-            return temp_file.name
-        except subprocess.CalledProcessError:
-            GenreAIService.cleanup_temp_file(temp_file.name)
-            fallback_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-            fallback_path.close()
-            fallback_command = [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
+            audio, sr = librosa.load(
                 file_path,
-                "-t",
-                str(seconds),
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                fallback_path.name,
-            ]
-            try:
-                subprocess.run(fallback_command, check=True, capture_output=True, text=True)
-                return fallback_path.name
-            except subprocess.CalledProcessError as exc:
-                GenreAIService.cleanup_temp_file(fallback_path.name)
-                logger.exception("ffmpeg failed to prepare audio clip")
-                raise ValidationError("Audio file could not be processed") from exc
+                sr=16000,
+                mono=True,
+                duration=seconds,
+            )
+            if audio.size == 0:
+                raise ValidationError("Audio file could not be processed")
+
+            sf.write(temp_file.name, audio, sr, subtype="PCM_16")
+            return temp_file.name
+        except Exception as exc:
+            GenreAIService.cleanup_temp_file(temp_file.name)
+            logger.exception("Audio processing failed")
+            raise ValidationError("Audio file could not be processed") from exc
