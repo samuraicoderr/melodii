@@ -64,10 +64,33 @@ class GenreAIService:
 
         # Check if model files exist locally (config.json and model weights)
         config_path = os.path.join(cache_dir, "config.json")
-        model_files_exist = os.path.isfile(config_path) and (
-            os.path.isfile(os.path.join(cache_dir, "pytorch_model.bin"))
-            or os.path.isfile(os.path.join(cache_dir, "model.safetensors"))
-        )
+        model_weight_path = os.path.join(cache_dir, "model.safetensors")
+        if not os.path.isfile(model_weight_path):
+            model_weight_path = os.path.join(cache_dir, "pytorch_model.bin")
+
+        model_files_exist = os.path.isfile(config_path) and os.path.isfile(model_weight_path)
+
+        # Validate model files are readable and non-empty before attempting to load
+        if model_files_exist:
+            try:
+                config_size = os.path.getsize(config_path)
+                model_size = os.path.getsize(model_weight_path)
+                if config_size == 0 or model_size == 0:
+                    logger.warning(
+                        "Cached model files are empty or invalid (config: %d bytes, model: %d bytes)",
+                        config_size,
+                        model_size,
+                    )
+                    raise OSError("Cached model files are empty")
+            except (OSError, IOError) as exc:
+                logger.warning(
+                    "Cached genre model is corrupted or inaccessible at %s. Clearing local cache: %s",
+                    cache_dir,
+                    exc,
+                    exc_info=True,
+                )
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                model_files_exist = False
 
         if model_files_exist:
             logger.info(
@@ -92,7 +115,7 @@ class GenreAIService:
                 model_to_load = model_name
         else:
             logger.info(
-                "Model not found locally. Loading from HuggingFace: %s",
+                "Model not found locally or cleared due to corruption. Loading from HuggingFace: %s",
                 model_name,
             )
             model_to_load = model_name
