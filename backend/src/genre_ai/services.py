@@ -1,7 +1,9 @@
 import logging
 import os
 import shutil
+import signal
 import tempfile
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Dict, List
@@ -50,6 +52,31 @@ class GenreAIService:
 
         return chosen
 
+    # Hard timeout (seconds) applied to each pipeline() call.
+    # Covers both local-cache loads and remote HuggingFace downloads.
+    MODEL_LOAD_TIMEOUT_SECONDS = 300
+
+    @staticmethod
+    @contextmanager
+    def _pipeline_timeout(seconds: int):
+        """
+        Context manager that raises TimeoutError if the body does not complete
+        within *seconds*.  Uses SIGALRM, which is only available on UNIX/Linux —
+        the environment where the Celery worker runs in production.
+        """
+        def _handler(signum, frame):
+            raise TimeoutError(
+                f"pipeline() did not complete within {seconds} seconds"
+            )
+
+        old_handler = signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)  # cancel any pending alarm
+            signal.signal(signal.SIGALRM, old_handler)  # restore previous handler
+
     @staticmethod
     @lru_cache(maxsize=1)
     def get_classifier(model_name: str, cache_dir: str):
@@ -58,6 +85,13 @@ class GenreAIService:
         except ImportError as exc:
             logger.exception("Transformers not installed")
             raise ValidationError("Model dependencies are missing") from exc
+
+        # Tell the HuggingFace hub client to time out individual HTTP requests
+        # so a stalled download surfaces as an error rather than a silent hang.
+        os.environ.setdefault(
+            "HF_HUB_DOWNLOAD_TIMEOUT",
+            str(GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS),
+        )
 
         hf_token = GenreAIService.get_settings()["hf_token"]
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
@@ -98,12 +132,21 @@ class GenreAIService:
                 cache_dir,
             )
             try:
-                return pipeline(
-                    "audio-classification",
-                    model=cache_dir,
-                    token=hf_token,
-                    cache_dir=cache_dir,
+                with GenreAIService._pipeline_timeout(GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS):
+                    return pipeline(
+                        "audio-classification",
+                        model=cache_dir,
+                        token=hf_token,
+                        cache_dir=cache_dir,
+                    )
+            except TimeoutError:
+                logger.error(
+                    "Timed out loading genre model from local cache after %d seconds: %s",
+                    GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS,
+                    cache_dir,
                 )
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                raise
             except Exception as exc:
                 logger.warning(
                     "Cached genre model failed to load from %s. Clearing local cache and retrying: %s",
@@ -120,12 +163,26 @@ class GenreAIService:
             )
             model_to_load = model_name
 
-        return pipeline(
-            "audio-classification",
-            model=model_to_load,
-            token=hf_token,
-            cache_dir=cache_dir,
+        logger.info(
+            "Loading genre classification model from HuggingFace (timeout: %ds): %s",
+            GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS,
+            model_to_load,
         )
+        try:
+            with GenreAIService._pipeline_timeout(GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS):
+                return pipeline(
+                    "audio-classification",
+                    model=model_to_load,
+                    token=hf_token,
+                    cache_dir=cache_dir,
+                )
+        except TimeoutError:
+            logger.error(
+                "Timed out loading genre model from HuggingFace after %d seconds: %s",
+                GenreAIService.MODEL_LOAD_TIMEOUT_SECONDS,
+                model_to_load,
+            )
+            raise
 
     @staticmethod
     def validate_file(filename: str, file_size_bytes: int) -> None:
