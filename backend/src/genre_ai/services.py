@@ -74,7 +74,22 @@ class GenreAIService:
                 "Loading genre classification model from local cache: %s",
                 cache_dir,
             )
-            model_to_load = cache_dir
+            try:
+                return pipeline(
+                    "audio-classification",
+                    model=cache_dir,
+                    token=hf_token,
+                    cache_dir=cache_dir,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Cached genre model failed to load from %s. Clearing local cache and retrying: %s",
+                    cache_dir,
+                    exc,
+                    exc_info=True,
+                )
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                model_to_load = model_name
         else:
             logger.info(
                 "Model not found locally. Loading from HuggingFace: %s",
