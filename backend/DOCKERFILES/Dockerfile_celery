@@ -1,0 +1,55 @@
+# Build stage
+FROM python:3.14-slim as builder
+
+# Install system dependencies and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    gcc \
+    g++ \
+    make \
+    libssl-dev \
+    libffi-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv and set PATH
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -s /root/.local/bin/uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Build Python packages
+RUN /root/.local/bin/uv sync --frozen --no-editable
+
+# Runtime stage
+FROM python:3.14-slim
+
+# Install runtime dependencies (ffmpeg is critical for audio processing)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DJANGO_SETTINGS_MODULE=src.config.settings
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import src.config.celery; print('Celery worker alive')" || exit 1
+
+# Start Celery worker
+CMD ["celery", "-A", "src.config", "worker", "-l", "info", "-P", "solo"]
