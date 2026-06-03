@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.14-slim as builder
+FROM python:3.14-slim AS builder
 
 # Install system dependencies and build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv and set PATH
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -s /root/.local/bin/uv /usr/local/bin/uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Build Python packages
-RUN /root/.local/bin/uv sync --frozen --no-editable
+RUN uv sync --frozen --no-editable
 
 # Runtime stage
 FROM python:3.14-slim
@@ -32,10 +32,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
-        curl \
-        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
 
 WORKDIR /app
 
@@ -44,14 +41,6 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
 COPY . .
-
-# Download the latest installer
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
-
-# Without this, uv may use hardlinks which can break across Docker layers.
-ENV UV_LINK_MODE=copy
-# Disable development dependencies
-ENV UV_NO_DEV=1
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -65,3 +54,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Start Celery worker
 CMD ["celery", "-A", "src.config", "worker", "-l", "info", "-P", "solo"]
+
