@@ -28,12 +28,14 @@ RUN /root/.local/bin/uv sync --frozen --no-editable
 FROM python:3.14-slim
 
 # Install runtime dependencies (ffmpeg is critical for audio processing)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    libsndfile1 \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+        curl \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get -y update && apt-get -y upgrade && apt-get install -y --no-install-recommends ffmpeg
 
 WORKDIR /app
 
@@ -42,6 +44,14 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
 COPY . .
+
+# Download the latest installer
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+
+# Without this, uv may use hardlinks which can break across Docker layers.
+ENV UV_LINK_MODE=copy
+# Disable development dependencies
+ENV UV_NO_DEV=1
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
