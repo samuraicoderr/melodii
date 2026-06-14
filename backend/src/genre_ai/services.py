@@ -163,19 +163,26 @@ class GenreAIService:
         settings_map = GenreAIService.get_settings()
         cache_dir = str(settings_map["model_cache_dir"])
 
+        skip_ffmpeg = os.getenv("DO_NOT_USE_FFMPEG") is not None
+
         clipped_path = None
         try:
-            log_step(f"Preparing first {settings_map['clip_seconds']} seconds of audio")
-            clipped_path = GenreAIService._clip_audio(
-                file_path,
-                seconds=int(settings_map["clip_seconds"]),
-            )
+            if skip_ffmpeg:
+                log_step("Skipping audio preprocessing (DO_NOT_USE_FFMPEG is set)")
+                audio_path = file_path
+            else:
+                log_step(f"Preparing first {settings_map['clip_seconds']} seconds of audio")
+                clipped_path = GenreAIService._clip_audio(
+                    file_path,
+                    seconds=int(settings_map["clip_seconds"]),
+                )
+                audio_path = clipped_path
 
             log_step("Loading model from persistent cache")
             classifier = GenreAIService.get_classifier(model_name, cache_dir)
 
             log_step("Running genre classification")
-            raw_predictions = classifier(clipped_path, top_k=settings_map["top_k"])
+            raw_predictions = classifier(audio_path, top_k=settings_map["top_k"])
         finally:
             GenreAIService.cleanup_temp_file(clipped_path)
 
@@ -273,6 +280,8 @@ class GenreAIService:
 
     @staticmethod
     def _ensure_ffmpeg_available() -> None:
+        if os.getenv("DO_NOT_USE_FFMPEG"):
+            return
         if shutil.which("ffmpeg") is None:
             raise ValidationError(
                 "ffmpeg is required to process audio files. Install it and ensure it is on your PATH."
