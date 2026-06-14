@@ -12,6 +12,7 @@ import {
   waitForBackend,
 } from "@/lib/tauri/backend";
 import { GenreAIProgressBar } from "./GenreAIProgressBar";
+import { preprocessAudioForClassification, AudioProcessingError } from "@/lib/utilities/audioUtils";
 
 const MAX_FILE_MB = 30;
 const ALLOWED_EXTENSIONS = ["mp3", "wav", "ogg", "flac", "m4a"];
@@ -142,10 +143,41 @@ export default function Home() {
       appendTerminalLine({
         timestamp: new Date().toISOString(),
         level: "info",
+        message: "Preprocessing audio file",
+      });
+
+      let fileToUpload: File;
+      try {
+        fileToUpload = await preprocessAudioForClassification(file);
+        if (fileToUpload !== file) {
+          appendTerminalLine({
+            timestamp: new Date().toISOString(),
+            level: "info",
+            message: `Extracted 30-second clip from original file`,
+          });
+        } else {
+          appendTerminalLine({
+            timestamp: new Date().toISOString(),
+            level: "info",
+            message: "Using original file (duration ≤ 30s)",
+          });
+        }
+      } catch (preprocessError) {
+        if (preprocessError instanceof AudioProcessingError) {
+          setError(`Audio preprocessing failed: ${preprocessError.message}`);
+          setLoading(false);
+          return;
+        }
+        throw preprocessError;
+      }
+
+      appendTerminalLine({
+        timestamp: new Date().toISOString(),
+        level: "info",
         message: "Uploading audio and starting job",
       });
 
-      const job = await GenreAIService.classify(file, selectedModel);
+      const job = await GenreAIService.classify(fileToUpload, selectedModel);
       appendTerminalLine({
         timestamp: new Date().toISOString(),
         level: "info",
